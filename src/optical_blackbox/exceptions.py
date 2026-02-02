@@ -83,42 +83,6 @@ class UnsupportedVersionError(InvalidOBBFileError):
 # =============================================================================
 # Parser Errors
 # =============================================================================
-
-
-class ParserError(OBBError):
-    """Base class for file parsing errors."""
-
-    pass
-
-
-class ZemaxParseError(ParserError):
-    """Raised when Zemax file parsing fails."""
-
-    def __init__(self, reason: str, line_number: Optional[int] = None):
-        details = reason
-        if line_number is not None:
-            details = f"Line {line_number}: {reason}"
-        super().__init__("Failed to parse Zemax file", details)
-
-
-class UnsupportedSurfaceTypeError(ParserError):
-    """Raised when an unsupported surface type is encountered."""
-
-    def __init__(self, surface_type: str):
-        super().__init__(
-            f"Unsupported surface type: {surface_type}",
-            "See docs/MVP_LIMITATIONS.md for supported types",
-        )
-
-
-class NoSurfacesFoundError(ParserError):
-    """Raised when no valid surfaces are found in the design file."""
-
-    def __init__(self):
-        super().__init__("No surfaces found", "File may be empty or non-sequential")
-
-
-# =============================================================================
 # Cryptographic Errors
 # =============================================================================
 

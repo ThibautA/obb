@@ -203,24 +203,6 @@ class TestExceptionInstantiation:
         error = InvalidOBBFileError("corrupted header")
         assert "corrupted header" in str(error)
 
-    def test_obsolete_parser_errors(self):
-        """Test obsolete parser exception classes for coverage."""
-        from optical_blackbox.exceptions import (
-            ZemaxParseError,
-            UnsupportedSurfaceTypeError,
-            NoSurfacesFoundError,
-        )
-
-        # These are obsolete but still need coverage
-        e1 = ZemaxParseError("test reason", line_number=42)
-        assert "42" in str(e1)
-
-        e2 = UnsupportedSurfaceTypeError("UNKNOWN_TYPE")
-        assert "UNKNOWN_TYPE" in str(e2)
-
-        e3 = NoSurfacesFoundError()
-        assert "surface" in str(e3).lower()
-
 
 class TestPEMSerializationErrors:
     """Tests for PEM serialization error paths."""
