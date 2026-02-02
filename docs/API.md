@@ -207,12 +207,28 @@ class OBBReader:
         """Read metadata without decrypting payload."""
     
     @staticmethod
+    def read(
+        path: Path,
+        platform_private_key: EllipticCurvePrivateKey,
+        vendor_public_key: EllipticCurvePublicKey,
+    ) -> tuple[OBBMetadata, SurfaceGroup]:
+        """Smart read that auto-detects full vs selective encryption."""
+    
+    @staticmethod
     def read_and_decrypt(
         path: Path,
         platform_private_key: EllipticCurvePrivateKey,
         vendor_public_key: EllipticCurvePublicKey,
     ) -> tuple[OBBMetadata, SurfaceGroup]:
-        """Read and decrypt full OBB file."""
+        """Read and decrypt full OBB file (legacy full encryption)."""
+    
+    @staticmethod
+    def read_and_decrypt_selective(
+        path: Path,
+        platform_private_key: EllipticCurvePrivateKey,
+        vendor_public_key: EllipticCurvePublicKey,
+    ) -> tuple[OBBMetadata, SurfaceGroup]:
+        """Read and decrypt selective OBB file."""
 ```
 
 **Example:**
@@ -220,10 +236,19 @@ class OBBReader:
 ```python
 from optical_blackbox.formats.obb_file import OBBWriter, OBBReader
 
-# Write
+# Write with full encryption (all surfaces encrypted)
 OBBWriter.write(
     output_path=Path("output.obb"),
     surface_group=surfaces,
+    metadata=metadata,
+    vendor_private_key=vendor_priv,
+    platform_public_key=platform_pub,
+)
+
+# Write with selective encryption (only marked surfaces encrypted)
+OBBWriter.write_selective(
+    output_path=Path("selective.obb"),
+    surface_group=surfaces,  # surfaces have visibility flags
     metadata=metadata,
     vendor_private_key=vendor_priv,
     platform_public_key=platform_pub,
@@ -233,7 +258,14 @@ OBBWriter.write(
 meta = OBBReader.read_metadata(Path("output.obb"))
 print(f"{meta.vendor_id}: {meta.name}, EFL={meta.efl_mm}mm")
 
-# Full decrypt
+# Smart read (auto-detects encryption mode - recommended)
+metadata, surfaces = OBBReader.read(
+    path=Path("output.obb"),
+    platform_private_key=platform_priv,
+    vendor_public_key=vendor_pub,
+)
+
+# Legacy full decrypt
 metadata, surfaces = OBBReader.read_and_decrypt(
     path=Path("output.obb"),
     platform_private_key=platform_priv,
@@ -285,6 +317,21 @@ else:
 
 Pydantic models with validation.
 
+#### SurfaceVisibility
+
+```python
+class SurfaceVisibility(str, Enum):
+    """Visibility level for selective encryption.
+    
+    - PUBLIC: Surface data stored in clear text
+    - ENCRYPTED: Surface data is encrypted
+    - REDACTED: Surface exists but all data is hidden
+    """
+    PUBLIC = "public"
+    ENCRYPTED = "encrypted"
+    REDACTED = "redacted"
+```
+
 #### Surface
 
 ```python
@@ -299,6 +346,7 @@ class Surface(BaseModel):
     semi_diameter: float  # mm
     conic: float
     aspheric_coeffs: dict[str, float] | None
+    visibility: SurfaceVisibility = SurfaceVisibility.PUBLIC  # New!
     
     # Properties
     @property
@@ -333,6 +381,19 @@ class SurfaceGroup(BaseModel):
     def primary_wavelength(self) -> float: ...
     
     def get_surface(self, index: int) -> Surface: ...
+    
+    # Selective encryption helpers (new!)
+    def has_selective_encryption(self) -> bool:
+        """Check if any surface has non-PUBLIC visibility."""
+    
+    def get_public_surfaces(self) -> list[Surface]:
+        """Get all surfaces with visibility=PUBLIC."""
+    
+    def get_encrypted_surfaces(self) -> list[Surface]:
+        """Get all surfaces with visibility=ENCRYPTED."""
+    
+    def get_redacted_surfaces(self) -> list[Surface]:
+        """Get all surfaces with visibility=REDACTED."""
 ```
 
 #### OBBMetadata
@@ -460,6 +521,97 @@ if result.is_ok():
     print(result.unwrap())  # 5.0
 else:
     print(f"Error: {result.error}")
+```
+
+---
+
+## Advanced Features
+
+### Selective Surface Encryption
+
+Encrypt only specific surfaces while keeping others in clear text. Useful for:
+- **Partial design sharing**: Share standard optics publicly, encrypt proprietary elements
+- **Reduced overhead**: Only decrypt surfaces when needed
+- **Flexible licensing**: Encrypt premium features, leave basic design public
+
+#### Basic Usage
+
+```python
+from optical_blackbox.models.surface import Surface, SurfaceVisibility
+from optical_blackbox.formats.obb_file import OBBWriter, OBBReader
+
+# Create surfaces with different visibility levels
+surfaces = [
+    Surface(surface_number=0, visibility=SurfaceVisibility.PUBLIC),
+    Surface(surface_number=1, visibility=SurfaceVisibility.PUBLIC),
+    Surface(surface_number=2, visibility=SurfaceVisibility.ENCRYPTED),  # Secret!
+    Surface(surface_number=3, visibility=SurfaceVisibility.ENCRYPTED),  # Secret!
+    Surface(surface_number=4, visibility=SurfaceVisibility.REDACTED),   # Completely hidden
+    Surface(surface_number=5, visibility=SurfaceVisibility.PUBLIC),
+]
+
+surface_group = SurfaceGroup(surfaces=surfaces)
+
+# Write with selective encryption
+OBBWriter.write_selective(
+    output_path=Path("selective.obb"),
+    surface_group=surface_group,
+    metadata=metadata,
+    vendor_private_key=vendor_priv,
+    platform_public_key=platform_pub,
+)
+
+# Read - auto-detects selective encryption
+metadata, surfaces = OBBReader.read(
+    path=Path("selective.obb"),
+    platform_private_key=platform_priv,
+    vendor_public_key=vendor_pub,
+)
+
+# Check encryption status
+if surface_group.has_selective_encryption():
+    print(f"Public: {len(surface_group.get_public_surfaces())}")
+    print(f"Encrypted: {len(surface_group.get_encrypted_surfaces())}")
+    print(f"Redacted: {len(surface_group.get_redacted_surfaces())}")
+```
+
+#### Visibility Levels
+
+- **PUBLIC**: Surface data stored in clear text
+  - Readable without decryption keys
+  - Ideal for standard optical components
+  
+- **ENCRYPTED**: Surface data is encrypted
+  - Requires platform private key to decrypt
+  - Use for proprietary designs (aspheric surfaces, custom coatings)
+  
+- **REDACTED**: Surface exists but all data is hidden
+  - Only surface index is stored
+  - Reconstructed as placeholder during decryption
+  - Use for completely confidential elements
+
+#### Example: Protect Aspheric Surfaces Only
+
+```python
+# Parse Zemax file
+result = parse_zmx_file(Path("lens.zmx"))
+surface_group = result.unwrap()
+
+# Mark aspheric surfaces as encrypted
+for surface in surface_group.surfaces:
+    if surface.surface_type == SurfaceType.EVENASPH:
+        surface.visibility = SurfaceVisibility.ENCRYPTED
+    else:
+        surface.visibility = SurfaceVisibility.PUBLIC  # Keep standard surfaces public
+
+# Write with selective encryption
+OBBWriter.write_selective(
+    output_path=Path("lens_selective.obb"),
+    surface_group=surface_group,
+    metadata=metadata,
+    vendor_private_key=vendor_priv,
+    platform_public_key=platform_pub,
+)
 ```
 
 ---
