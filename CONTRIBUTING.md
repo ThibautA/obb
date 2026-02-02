@@ -58,21 +58,21 @@ python -m pytest tests/
 ```
 optical_blackbox/
 ├── src/optical_blackbox/    # Main package
-│   ├── crypto/              # Encryption, signing, key management
-│   ├── core/                # Result type, validators
-│   ├── formats/             # OBB file format implementation
-│   ├── models/              # Pydantic data models
-│   ├── parsers/             # Zemax parsers (.zmx, .zar)
-│   ├── optics/              # Optical calculations
-│   ├── surfaces/            # Surface representations
-│   ├── serialization/       # Binary, JSON, PEM utilities
-│   └── cli/                 # Command-line interface
+│   ├── crypto/              # Encryption, signing, key management (ECDH + AES-256-GCM)
+│   ├── core/                # Result type, validators, constants
+│   ├── formats/             # OBB file format (binary structure, header, payload)
+│   ├── models/              # Pydantic data models (metadata)
+│   ├── serialization/       # Binary and PEM utilities
+│   └── cli/                 # Command-line interface (keygen, create, extract, inspect)
 ├── tests/                   # Test suite
 │   ├── unit/                # Unit tests (mirror src structure)
+│   ├── test_roundtrip.py    # Integration tests (byte-for-byte verification)
 │   └── conftest.py          # Shared fixtures
-├── testdata/                # Sample .zmx files
+├── testdata/                # Sample encrypted files
 └── docs/                    # Documentation
 ```
+
+**Note**: The project now focuses on simple byte-based encryption. Previous modules for parsing optical files (parsers/, optics/, surfaces/) have been removed.
 
 ## Development Workflow
 
@@ -123,10 +123,10 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 **Examples:**
 
 ```
-feat(parser): add support for toroidal surfaces
+feat(crypto): add batch encryption support
 
-Implement ToroidalSurface class with sag calculation.
-Add tests for surface type mapping and roundtrip.
+Implement multi-file encryption with progress callback.
+Add tests for batch operations and error handling.
 
 Closes #42
 ```
@@ -168,22 +168,23 @@ ruff format src/ tests/
 Use Google-style docstrings with examples:
 
 ```python
-def parse_zmx_file(path: Path) -> Result[SurfaceGroup, ParserError]:
-    """Parse a Zemax .zmx file into a SurfaceGroup.
+def encrypt_file(input_path: Path, platform_key: bytes) -> Result[bytes, CryptoError]:
+    """Encrypt a file using ECDH + AES-256-GCM.
 
     Args:
-        path: Path to the .zmx file
+        input_path: Path to the file to encrypt
+        platform_key: Platform's public key for ECDH
 
     Returns:
-        Ok(SurfaceGroup) on success, Err(ParserError) on failure
+        Ok(bytes) with encrypted payload on success, Err(CryptoError) on failure
 
     Raises:
         FileNotFoundError: If file doesn't exist
 
     Example:
-        >>> result = parse_zmx_file(Path("lens.zmx"))
+        >>> result = encrypt_file(Path("design.zmx"), platform_pubkey)
         >>> if result.is_ok():
-        ...     surfaces = result.unwrap()
+        ...     encrypted_data = result.unwrap()
     """
 ```
 
@@ -312,7 +313,7 @@ git push origin feature/your-feature
 <type>: <description>
 ```
 
-Example: `feat: add toroidal surface support`
+Example: `feat: add batch encryption support`
 
 ### PR Description Template
 

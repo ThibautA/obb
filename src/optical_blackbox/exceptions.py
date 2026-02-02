@@ -200,29 +200,4 @@ class UnknownVendorError(VendorError):
         )
 
 
-# =============================================================================
-# Optical Calculation Errors
-# =============================================================================
 
-
-class OpticsError(OBBError):
-    """Base class for optical calculation errors."""
-
-    pass
-
-
-class InvalidSurfaceError(OpticsError):
-    """Raised when surface parameters are physically invalid."""
-
-    def __init__(self, surface_number: int, reason: str):
-        super().__init__(f"Invalid surface {surface_number}", reason)
-
-
-class UnknownMaterialError(OpticsError):
-    """Raised when glass material is not in catalog."""
-
-    def __init__(self, material: str):
-        super().__init__(
-            f"Unknown material: {material}",
-            "Using default index n=1.5",
-        )

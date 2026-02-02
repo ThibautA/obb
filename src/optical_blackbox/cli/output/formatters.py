@@ -81,9 +81,8 @@ def format_creation_result(
 
     content = f"""[bold]Output:[/bold] [path]{output_path}[/path]
 [bold]Size:[/bold] {size_kb:.1f} KB
-[bold]Surfaces:[/bold] {metadata.num_surfaces}
-[bold]EFL:[/bold] {metadata.efl_mm:.2f} mm
-[bold]NA:[/bold] {metadata.na:.4f}"""
+[bold]Vendor:[/bold] {metadata.vendor_id}
+[bold]Model:[/bold] {metadata.model_id}"""
 
     return Panel(content, title="✓ OBB File Created", border_style="green")
 

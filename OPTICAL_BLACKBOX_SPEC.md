@@ -467,15 +467,17 @@ Sur un processeur moderne:
 ### 9.1 Fonctionnalités Potentielles
 
 - Signature ECDSA du vendor (authentification)
-- Chiffrement sélectif (certaines surfaces publiques)
 - Support de multiples clés de plateforme (pour plusieurs destinataires)
 - Compression avant chiffrement
-- Métadonnées étendues (propriétés optiques calculées)
+- Chiffrement de répertoires complets
+- Interface web pour visualisation sécurisée
+- Intégration cloud storage (S3, Azure Blob)
 
 ### 9.2 Formats Additionnels
 
-- Support natif d'autres formats (CODE V, Oslo, etc.)
-- Conversion automatique entre formats
+- Détection automatique de type de fichier
+- Support de formats binaires arbitraires
+- Préservation des métadonnées de fichiers système
 
 ---
 

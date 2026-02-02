@@ -8,46 +8,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- Full support for additional Zemax surface types (toroidal, odd asphere)
-- Extended glass catalog (all Schott, Ohara, Hoya)
-- Chromatic aberration calculations
-- Ray tracing capabilities
-- Multi-configuration support
+- Multi-file batch encryption
+- Directory encryption
+- Cloud storage integration
+- Web-based file viewer
 
-## [1.0.0] - 2026-02-02
+## [2.0.0] - 2026-02-02
+
+### Changed - Major Architecture Simplification
+- **BREAKING**: Removed all file parsing logic (no longer parse .zmx files)
+- **BREAKING**: Removed optical calculations (EFL, NA, paraxial)
+- **BREAKING**: Simplified to raw byte encryption/decryption
+- **BREAKING**: Removed GUI module (0% test coverage)
+- Reduced codebase by 36.4% (~1,420 lines removed)
+- Simplified metadata model (5 fields vs 10+)
+- Updated documentation to reflect byte-based architecture
+
+### Added
+- `extract` command to decrypt .obb files
+- Comprehensive test fixtures
+- New TESTING.md documentation
+- Byte-for-byte identity verification in tests
+
+### Removed
+- All parsing modules (parsers/, optics/, surfaces/)
+- Surface type definitions and calculations
+- Glass catalog and refractive index database
+- JSON codec for structured data
+- Selective encryption feature
+- GUI application
+
+### Fixed
+- All import errors after module removal
+- Test fixtures for unit tests
+- Metadata validation tests
+
+## [1.0.0] - 2026-01-30 (Legacy Version)
 
 ### Added
 - **Core Encryption**: ECDH key exchange + AES-256-GCM hybrid encryption
 - **Digital Signatures**: ECDSA P-256 signatures for vendor authentication
 - **OBB File Format**: Binary format with magic bytes, header, encrypted payload
-- **Zemax Parser**: Support for .zmx (UTF-16LE) and .zar (ZIP) files
-- **Surface Types**: Standard (conic) and even asphere surfaces
-- **Glass Catalog**: 40+ Schott glasses with refractive indices
-- **Paraxial Calculations**: ABCD matrix, EFL, BFL, NA computation
-- **CLI Tool**: `obb` command-line interface for encrypt/decrypt/info
-- **Python API**: Full programmatic access to all features
+- **CLI Tool**: `obb` command-line interface
 - **Type Safety**: Pydantic v2 models with strict validation
 - **Result Type**: Rust-inspired error handling pattern
-- **Comprehensive Tests**: 468 unit tests with 76% code coverage
-
-### Documentation
-- Technical specification (OPTICAL_BLACKBOX_SPEC.md)
-- MVP limitations document (docs/MVP_LIMITATIONS.md)
-- README with quick start guide
-- API documentation with examples
-- Inline docstrings (Google style)
 
 ### Security
 - NIST P-256 elliptic curve cryptography
 - AES-256-GCM authenticated encryption
 - HKDF-SHA256 key derivation
-- Constant-time operations for sensitive data
 - Key management with PEM format support
-
-## [0.1.0] - 2025-12-15 (Internal Alpha)
-
-### Added
-- Initial project structure
 - Basic encryption/decryption prototype
 - Zemax .zmx parsing (surface data only)
 - Simple CLI prototype
