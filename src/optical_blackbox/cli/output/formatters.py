@@ -27,37 +27,18 @@ def format_metadata_table(metadata: OBBMetadata) -> Table:
 
     table.add_row("Version", metadata.version)
     table.add_row("Vendor ID", metadata.vendor_id)
-    table.add_row("Name", metadata.name)
+    table.add_row("Model ID", metadata.model_id)
 
     if metadata.description:
         table.add_row("Description", metadata.description)
 
-    if metadata.part_number:
-        table.add_row("Part Number", metadata.part_number)
-
-    # Optical properties
-    efl_str = f"{metadata.efl_mm:.2f} mm" if metadata.efl_mm != float("inf") else "∞ (afocal)"
-    table.add_row("EFL", efl_str)
-    table.add_row("NA", f"{metadata.na:.4f}")
-    table.add_row("Diameter", f"{metadata.diameter_mm:.2f} mm")
-
-    # Spectral range
-    if metadata.spectral_range_nm:
-        table.add_row(
-            "Spectral Range",
-            f"{metadata.spectral_range_nm[0]:.1f} - {metadata.spectral_range_nm[1]:.1f} nm",
-        )
-
-    table.add_row("Surfaces", str(metadata.num_surfaces))
+    if metadata.original_filename:
+        table.add_row("Original Filename", metadata.original_filename)
 
     if metadata.created_at:
         table.add_row("Created", metadata.created_at.isoformat())
 
-    # Signature status
-    if metadata.signature:
-        table.add_row("Signature", "[green]Present[/green]")
-    else:
-        table.add_row("Signature", "[yellow]None[/yellow]")
+    return table
 
     return table
 

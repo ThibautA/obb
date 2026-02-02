@@ -47,16 +47,15 @@ def keygen_command(output_dir: Path, prefix: str, force: bool) -> None:
     # Generate keys
     console.print("Generating ECDSA P-256 key pair...", style="dim")
 
-    key_manager = KeyManager()
-    key_manager.generate()
+    private_key, public_key = KeyManager.generate_keypair()
 
     # Save keys
-    key_manager.save_private_key(private_path)
-    key_manager.save_public_key(public_path)
+    KeyManager.save_private_key(private_key, private_path)
+    KeyManager.save_public_key(public_key, public_path)
 
     # Compute fingerprint (first 16 hex chars of SHA-256)
-    public_bytes = key_manager.get_public_key_bytes()
-    fingerprint = hashlib.sha256(public_bytes).hexdigest()[:16].upper()
+    public_pem = public_path.read_text(encoding="ascii")
+    fingerprint = hashlib.sha256(public_pem.encode()).hexdigest()[:16].upper()
 
     # Display results
     console.print()

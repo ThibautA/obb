@@ -1,165 +1,191 @@
-"""Test round-trip encryption/decryption of .zmx files."""
+"""Test round-trip encryption/decryption of optical design files."""
 
-import sys
 import tempfile
 from pathlib import Path
+from datetime import datetime
 
-# Add src to path for testing without install
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+import pytest
 
 from optical_blackbox.crypto.keys import KeyManager
-from optical_blackbox.parsers import ZemaxParser
-from optical_blackbox.optics import extract_metadata
+from optical_blackbox.models.metadata import OBBMetadata
 from optical_blackbox.formats.obb_file import OBBWriter, OBBReader
 
 
-def test_roundtrip(zmx_path: Path) -> bool:
-    """Test encrypt/decrypt round-trip for a .zmx file.
+def test_roundtrip_bytes():
+    """Test that encrypting and decrypting bytes gives exact original."""
     
-    Returns True if successful, False otherwise.
-    """
-    print(f"\n{'='*60}")
-    print(f"Testing: {zmx_path.name}")
-    print('='*60)
+    # Create test data
+    original_bytes = b"This is test optical design file content.\n" * 100
+    
+    # Generate keys
+    platform_private, platform_public = KeyManager.generate_keypair()
+    
+    # Create metadata
+    metadata = OBBMetadata(
+        version="1.0.0",
+        vendor_id="test-vendor",
+        model_id="test-model",
+        created_at=datetime.utcnow(),
+        description="Test file",
+        original_filename="test.zmx",
+    )
+    
+    # Encrypt
+    with tempfile.NamedTemporaryFile(suffix=".obb", delete=False) as f:
+        obb_path = Path(f.name)
     
     try:
-        # 1. Generate keys
-        print("1. Generating keys...")
-        vendor_private, vendor_public = KeyManager.generate_keypair()
-        platform_private, platform_public = KeyManager.generate_keypair()
-        
-        # 2. Parse .zmx file
-        print("2. Parsing Zemax file...")
-        parser = ZemaxParser()
-        
-        try:
-            original_surfaces = parser.parse(zmx_path)
-        except Exception as parse_error:
-            print(f"   ERROR: Failed to parse - {parse_error}")
-            return False
-        
-        print(f"   Found {original_surfaces.num_surfaces} surfaces")
-        
-        # 3. Extract metadata
-        print("3. Extracting metadata...")
-        metadata = extract_metadata(
-            surface_group=original_surfaces,
-            vendor_id="test-vendor",
-            name=zmx_path.stem,
-            description="Test encryption round-trip",
-        )
-        print(f"   EFL: {metadata.efl_mm:.2f} mm, NA: {metadata.na:.4f}")
-        
-        # 4. Write encrypted .obb file
-        print("4. Writing encrypted .obb file...")
-        with tempfile.NamedTemporaryFile(suffix=".obb", delete=False) as f:
-            obb_path = Path(f.name)
-        
         OBBWriter.write(
             output_path=obb_path,
-            surface_group=original_surfaces,
+            payload_bytes=original_bytes,
             metadata=metadata,
-            vendor_private_key=vendor_private,
             platform_public_key=platform_public,
         )
         
-        file_size = obb_path.stat().st_size
-        print(f"   Created: {obb_path.name} ({file_size} bytes)")
+        # Decrypt
+        read_metadata, decrypted_bytes = OBBReader.read_and_decrypt(
+            path=obb_path,
+            platform_private_key=platform_private,
+        )
         
-        # 5. Read metadata (without decryption)
-        print("5. Reading metadata from .obb...")
-        try:
-            read_metadata = OBBReader.read_metadata(obb_path)
-        except Exception as read_error:
-            print(f"   ERROR: Failed to read metadata - {read_error}")
-            return False
+        # Verify
+        assert decrypted_bytes == original_bytes, "Decrypted bytes don't match original"
+        assert read_metadata.vendor_id == metadata.vendor_id
+        assert read_metadata.model_id == metadata.model_id
+        assert read_metadata.original_filename == metadata.original_filename
         
-        print(f"   Name: {read_metadata.name}")
-        print(f"   Surfaces: {read_metadata.num_surfaces}")
+        print(f"✓ Round-trip successful: {len(original_bytes)} bytes")
         
-        # 6. Decrypt and read surfaces
-        print("6. Decrypting .obb file...")
-        try:
-            decrypted_meta, decrypted_surfaces = OBBReader.read_and_decrypt(
-                obb_path,
-                platform_private_key=platform_private,
-                vendor_public_key=vendor_public,
-            )
-        except Exception as decrypt_error:
-            print(f"   ERROR: Failed to decrypt - {decrypt_error}")
-            import traceback
-            traceback.print_exc()
-            return False
-        
-        print(f"   Decrypted {decrypted_surfaces.num_surfaces} surfaces")
-        
-        # 7. Verify round-trip
-        print("7. Verifying round-trip...")
-        
-        # Check number of surfaces
-        if original_surfaces.num_surfaces != decrypted_surfaces.num_surfaces:
-            print(f"   ERROR: Surface count mismatch: {original_surfaces.num_surfaces} vs {decrypted_surfaces.num_surfaces}")
-            return False
-        
-        # Check each surface
-        for i, (orig, decr) in enumerate(zip(original_surfaces.surfaces, decrypted_surfaces.surfaces)):
-            if abs(orig.radius - decr.radius) > 1e-10:
-                print(f"   ERROR: Surface {i} radius mismatch: {orig.radius} vs {decr.radius}")
-                return False
-            if abs(orig.thickness - decr.thickness) > 1e-10:
-                print(f"   ERROR: Surface {i} thickness mismatch: {orig.thickness} vs {decr.thickness}")
-                return False
-            if orig.material != decr.material:
-                print(f"   ERROR: Surface {i} material mismatch: {orig.material} vs {decr.material}")
-                return False
-        
+    finally:
         # Cleanup
-        obb_path.unlink()
-        
-        print("\n✓ ROUND-TRIP SUCCESSFUL!")
-        return True
-        
-    except Exception as e:
-        print(f"\n✗ ERROR: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        if obb_path.exists():
+            obb_path.unlink()
 
 
-def main():
-    """Run round-trip tests on sample .zmx files."""
-    testdata = Path(__file__).parent.parent / "testdata"
+def test_roundtrip_real_zmx_file():
+    """Test with a real .zmx file if available."""
     
-    # Find some .zmx files to test
-    zmx_files = list(testdata.rglob("*.zmx"))[:20]  # Test first 20 files
+    # Find a real .zmx file
+    testdata_dir = Path(__file__).parent.parent / "testdata"
+    zmx_files = list(testdata_dir.rglob("*.zmx"))
     
     if not zmx_files:
-        print("No .zmx files found in testdata/")
-        return 1
+        pytest.skip("No .zmx files found in testdata")
     
-    print(f"Found {len(zmx_files)} .zmx files to test")
+    zmx_path = zmx_files[0]
+    print(f"\nTesting with: {zmx_path.name}")
     
-    results = []
-    for zmx_path in zmx_files:
-        success = test_roundtrip(zmx_path)
-        results.append((zmx_path.name, success))
+    # Read original file
+    original_bytes = zmx_path.read_bytes()
+    print(f"File size: {len(original_bytes)} bytes")
     
-    # Summary
-    print("\n" + "="*60)
-    print("SUMMARY")
-    print("="*60)
+    # Generate keys
+    platform_private, platform_public = KeyManager.generate_keypair()
     
-    passed = sum(1 for _, s in results if s)
-    failed = len(results) - passed
+    # Create metadata
+    metadata = OBBMetadata(
+        version="1.0.0",
+        vendor_id="test-vendor",
+        model_id="test-model",
+        created_at=datetime.utcnow(),
+        description=f"Test of {zmx_path.name}",
+        original_filename=zmx_path.name,
+    )
     
-    for name, success in results:
-        status = "✓ PASS" if success else "✗ FAIL"
-        print(f"  {status}: {name}")
+    # Encrypt
+    with tempfile.NamedTemporaryFile(suffix=".obb", delete=False) as f:
+        obb_path = Path(f.name)
     
-    print(f"\nTotal: {passed}/{len(results)} passed")
+    try:
+        OBBWriter.write(
+            output_path=obb_path,
+            payload_bytes=original_bytes,
+            metadata=metadata,
+            platform_public_key=platform_public,
+        )
+        
+        obb_size = obb_path.stat().st_size
+        print(f"OBB file size: {obb_size} bytes")
+        
+        # Decrypt
+        read_metadata, decrypted_bytes = OBBReader.read_and_decrypt(
+            path=obb_path,
+            platform_private_key=platform_private,
+        )
+        
+        # Verify
+        assert decrypted_bytes == original_bytes, "Decrypted .zmx doesn't match original"
+        assert read_metadata.original_filename == zmx_path.name
+        
+        print(f"✓ Real file round-trip successful")
+        
+    finally:
+        # Cleanup
+        if obb_path.exists():
+            obb_path.unlink()
+
+
+def test_metadata_only_read():
+    """Test reading metadata without decryption."""
     
-    return 0 if failed == 0 else 1
+    # Create test data
+    original_bytes = b"Test data"
+    
+    # Generate keys
+    platform_private, platform_public = KeyManager.generate_keypair()
+    
+    # Create metadata
+    metadata = OBBMetadata(
+        version="1.0.0",
+        vendor_id="vendor-123",
+        model_id="model-abc",
+        created_at=datetime.utcnow(),
+        description="Test metadata reading",
+        original_filename="test.zmx",
+    )
+    
+    # Encrypt
+    with tempfile.NamedTemporaryFile(suffix=".obb", delete=False) as f:
+        obb_path = Path(f.name)
+    
+    try:
+        OBBWriter.write(
+            output_path=obb_path,
+            payload_bytes=original_bytes,
+            metadata=metadata,
+            platform_public_key=platform_public,
+        )
+        
+        # Read metadata only (no key needed)
+        read_metadata = OBBReader.read_metadata(obb_path)
+        
+        # Verify
+        assert read_metadata.vendor_id == metadata.vendor_id
+        assert read_metadata.model_id == metadata.model_id
+        assert read_metadata.description == metadata.description
+        assert read_metadata.original_filename == metadata.original_filename
+        
+        print("✓ Metadata-only read successful")
+        
+    finally:
+        # Cleanup
+        if obb_path.exists():
+            obb_path.unlink()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    """Run tests directly."""
+    print("Running round-trip tests...")
+    print("=" * 60)
+    
+    test_roundtrip_bytes()
+    print()
+    
+    test_roundtrip_real_zmx_file()
+    print()
+    
+    test_metadata_only_read()
+    print()
+    
+    print("=" * 60)
+    print("All tests passed!")

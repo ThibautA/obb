@@ -1,29 +1,28 @@
 """OBB file creation command.
 
-Creates encrypted .obb files from Zemax designs.
+Creates encrypted .obb files from optical design files (.zmx, etc).
 """
 
 from pathlib import Path
+from datetime import datetime
 
 import click
 
 from optical_blackbox.crypto.keys import KeyManager
-from optical_blackbox.parsers import ZemaxParser
-from optical_blackbox.optics import extract_metadata
+from optical_blackbox.models.metadata import OBBMetadata
 from optical_blackbox.formats import OBBWriter
 from optical_blackbox.cli.output.console import console, print_success, print_error, print_info
-from optical_blackbox.cli.output.formatters import format_creation_result
 
 
 @click.command("create")
 @click.argument("input_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.argument("output_file", type=click.Path(dir_okay=False, path_type=Path))
 @click.option(
-    "--private-key",
+    "--platform-key",
     "-k",
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to vendor private key (PEM)",
+    help="Path to platform public key (PEM) for encryption",
 )
 @click.option(
     "--vendor-id",
@@ -32,29 +31,16 @@ from optical_blackbox.cli.output.formatters import format_creation_result
     help="Vendor identifier (3-50 chars, lowercase alphanumeric)",
 )
 @click.option(
-    "--name",
-    "-n",
+    "--model-id",
+    "-m",
     required=True,
-    help="Component name",
+    help="Model identifier (3-50 chars, lowercase alphanumeric)",
 )
 @click.option(
     "--description",
     "-d",
     default=None,
     help="Component description",
-)
-@click.option(
-    "--part-number",
-    "-p",
-    default=None,
-    help="Part number",
-)
-@click.option(
-    "--recipient-key",
-    "-r",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=None,
-    help="Recipient public key for encryption (optional)",
 )
 @click.option(
     "--force",
@@ -64,17 +50,19 @@ from optical_blackbox.cli.output.formatters import format_creation_result
 def create_command(
     input_file: Path,
     output_file: Path,
-    private_key: Path,
+    platform_key: Path,
     vendor_id: str,
-    name: str,
+    model_id: str,
     description: str | None,
-    part_number: str | None,
-    recipient_key: Path | None,
     force: bool,
 ) -> None:
-    """Create an encrypted OBB file from a Zemax design.
+    """Create an encrypted OBB file from an optical design file.
 
-    INPUT_FILE: Zemax file (.zmx or .zar)
+    Reads the raw bytes from the input file, encrypts them, and
+    stores them in an .obb file. The original file can be restored
+    exactly during decryption.
+
+    INPUT_FILE: Optical design file (.zmx, .zar, etc)
     OUTPUT_FILE: Output .obb file path
     """
     # Check output
@@ -87,58 +75,61 @@ def create_command(
     if output_file.suffix.lower() != ".obb":
         output_file = output_file.with_suffix(".obb")
 
-    # Load vendor key
-    print_info("Loading vendor key...")
-    vendor_key_manager = KeyManager()
-    vendor_key_manager.load_private_key(private_key)
-
-    # Load recipient key if provided
-    recipient_key_manager: KeyManager | None = None
-    if recipient_key:
-        print_info("Loading recipient key...")
-        recipient_key_manager = KeyManager()
-        recipient_key_manager.load_public_key(recipient_key)
-
-    # Parse input file
-    print_info(f"Parsing {input_file.name}...")
-    parser = ZemaxParser()
-    result = parser.parse(input_file)
-
-    if not result.is_ok():
-        print_error(f"Failed to parse: {result.error}")
+    # Load platform public key
+    print_info("Loading platform key...")
+    try:
+        platform_public_key = KeyManager.load_public_key(platform_key)
+    except Exception as e:
+        print_error(f"Failed to load key: {e}")
         raise SystemExit(1)
 
-    surface_group = result.unwrap()
-    console.print(f"  [dim]Found {surface_group.num_surfaces} surfaces[/dim]")
+    # Read input file as raw bytes
+    print_info(f"Reading {input_file.name}...")
+    try:
+        payload_bytes = input_file.read_bytes()
+        file_size_kb = len(payload_bytes) / 1024
+        console.print(f"  [dim]File size: {file_size_kb:.1f} KB ({len(payload_bytes)} bytes)[/dim]")
+    except Exception as e:
+        print_error(f"Failed to read file: {e}")
+        raise SystemExit(1)
 
-    # Extract metadata
-    print_info("Computing optical properties...")
-    metadata = extract_metadata(
-        surface_group=surface_group,
+    # Create metadata
+    metadata = OBBMetadata(
+        version="1.0.0",
         vendor_id=vendor_id,
-        name=name,
+        model_id=model_id,
+        created_at=datetime.utcnow(),
         description=description,
-        part_number=part_number,
+        original_filename=input_file.name,
     )
-
-    console.print(f"  [dim]EFL: {metadata.efl_mm:.2f} mm, NA: {metadata.na:.4f}[/dim]")
 
     # Create OBB file
     print_info("Creating encrypted OBB file...")
-    writer = OBBWriter(vendor_key_manager)
+    try:
+        OBBWriter.write(
+            output_path=output_file,
+            payload_bytes=payload_bytes,
+            metadata=metadata,
+            platform_public_key=platform_public_key,
+        )
+    except Exception as e:
+        print_error(f"Failed to create OBB file: {e}")
+        raise SystemExit(1)
 
-    writer.write(
-        surfaces=surface_group,
-        metadata=metadata,
-        output_path=output_file,
-        recipient_public_key=recipient_key_manager.get_public_key() if recipient_key_manager else None,
-    )
-
-    # Get file size
-    file_size = output_file.stat().st_size
+    # Get output file size
+    output_size = output_file.stat().st_size
+    output_size_kb = output_size / 1024
 
     # Display result
     console.print()
-    console.print(format_creation_result(str(output_file), metadata, file_size))
+    console.print("[bold green]✓ OBB File Created[/bold green]")
+    console.print()
+    console.print(f"  [dim]Output:[/dim]     {output_file}")
+    console.print(f"  [dim]Size:[/dim]       {output_size_kb:.1f} KB")
+    console.print(f"  [dim]Vendor:[/dim]     {vendor_id}")
+    console.print(f"  [dim]Model:[/dim]      {model_id}")
+    console.print(f"  [dim]Original:[/dim]   {input_file.name}")
+    if description:
+        console.print(f"  [dim]Description:[/dim] {description}")
     console.print()
     print_success(f"Created {output_file}")

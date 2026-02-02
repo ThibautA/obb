@@ -1,6 +1,7 @@
 """OBB file reader and writer.
 
 Provides high-level interface for reading and writing .obb files.
+Simplified to work with raw file bytes without parsing.
 """
 
 from pathlib import Path
@@ -10,7 +11,6 @@ from typing import BinaryIO
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from optical_blackbox.models.metadata import OBBMetadata
-from optical_blackbox.models.surface_group import SurfaceGroup
 from optical_blackbox.serialization.binary import BinaryReader, BinaryWriter
 from optical_blackbox.formats.obb_constants import OBB_MAGIC
 from optical_blackbox.formats.obb_header import (
@@ -22,16 +22,12 @@ from optical_blackbox.formats.obb_header import (
 )
 from optical_blackbox.formats.obb_payload import (
     encrypt_payload,
-    encrypt_payload_selective,
     decrypt_payload,
-    decrypt_payload_selective,
-    sign_payload,
-    verify_payload_signature,
 )
+from optical_blackbox.crypto.ecdh import derive_shared_key
 from optical_blackbox.exceptions import (
     InvalidMagicBytesError,
     InvalidOBBFileError,
-    InvalidSignatureError,
 )
 
 
@@ -41,9 +37,8 @@ class OBBWriter:
     Example:
         >>> OBBWriter.write(
         ...     output_path=Path("component.obb"),
-        ...     surface_group=surfaces,
+        ...     payload_bytes=zmx_file_bytes,
         ...     metadata=metadata,
-        ...     vendor_private_key=vendor_key,
         ...     platform_public_key=platform_key,
         ... )
     """
@@ -52,18 +47,16 @@ class OBBWriter:
     def write(
         cls,
         output_path: Path,
-        surface_group: SurfaceGroup,
+        payload_bytes: bytes,
         metadata: OBBMetadata,
-        vendor_private_key: ec.EllipticCurvePrivateKey,
         platform_public_key: ec.EllipticCurvePublicKey,
     ) -> None:
-        """Write a .obb file.
+        """Write a .obb file from raw optical design file bytes.
 
         Args:
             output_path: Path for the output file
-            surface_group: Optical surfaces to encrypt
+            payload_bytes: Raw optical design file bytes to encrypt
             metadata: Public metadata
-            vendor_private_key: Vendor's key for signing
             platform_public_key: Platform's key for encryption
         """
         # Ensure parent directory exists
@@ -72,9 +65,8 @@ class OBBWriter:
         with open(output_path, "wb") as f:
             cls._write_to_stream(
                 f,
-                surface_group,
+                payload_bytes,
                 metadata,
-                vendor_private_key,
                 platform_public_key,
             )
 
@@ -82,123 +74,45 @@ class OBBWriter:
     def _write_to_stream(
         cls,
         stream: BinaryIO,
-        surface_group: SurfaceGroup,
+        payload_bytes: bytes,
         metadata: OBBMetadata,
-        vendor_private_key: ec.EllipticCurvePrivateKey,
         platform_public_key: ec.EllipticCurvePublicKey,
     ) -> None:
         """Write .obb data to a stream.
 
         Args:
             stream: Binary stream to write to
-            surface_group: Optical surfaces to encrypt
+            payload_bytes: Raw optical design file bytes to encrypt
             metadata: Public metadata
-            vendor_private_key: Vendor's key for signing
             platform_public_key: Platform's key for encryption
         """
         writer = BinaryWriter(stream)
 
+        # Generate ephemeral key pair for ECDH
+        ephemeral_private = ec.generate_private_key(ec.SECP256R1())
+        ephemeral_public = ephemeral_private.public_key()
+
+        # Derive shared AES key using ECDH
+        aes_key = derive_shared_key(ephemeral_private, platform_public_key)
+
         # Encrypt payload
-        encrypted_payload, ephemeral_public = encrypt_payload(
-            surface_group,
-            platform_public_key,
-        )
+        nonce, ciphertext = encrypt_payload(payload_bytes, aes_key)
 
-        # Sign payload
-        signature = sign_payload(encrypted_payload, vendor_private_key)
+        # Combine nonce + ciphertext for storage
+        encrypted_payload = nonce + ciphertext
 
-        # Update metadata with signature and timestamp
-        metadata.signature = signature
+        # Update metadata with timestamp
         metadata.created_at = datetime.utcnow()
 
         # Build and serialize header
         header = build_header(metadata, ephemeral_public)
         header_bytes = serialize_header(header)
 
-        # Write file structure
+        # Write file structure:
+        # [MAGIC][HEADER_LENGTH][HEADER][ENCRYPTED_PAYLOAD]
         writer.write_magic(OBB_MAGIC)
         writer.write_length_prefixed(header_bytes)
         writer.write_bytes(encrypted_payload)
-
-    @classmethod
-    def write_selective(
-        cls,
-        output_path: Path,
-        surface_group: SurfaceGroup,
-        metadata: OBBMetadata,
-        vendor_private_key: ec.EllipticCurvePrivateKey,
-        platform_public_key: ec.EllipticCurvePublicKey,
-    ) -> None:
-        """Write a .obb file with selective surface encryption.
-
-        Only surfaces marked with visibility=ENCRYPTED are encrypted.
-        Surfaces with visibility=PUBLIC remain in clear text.
-        Surfaces with visibility=REDACTED are completely hidden (only index stored).
-
-        Args:
-            output_path: Path for the output file
-            surface_group: Optical surfaces (visibility field controls encryption)
-            metadata: Public metadata
-            vendor_private_key: Vendor's key for signing
-            platform_public_key: Platform's key for encryption
-        """
-        # Ensure parent directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path, "wb") as f:
-            cls._write_selective_to_stream(
-                f,
-                surface_group,
-                metadata,
-                vendor_private_key,
-                platform_public_key,
-            )
-
-    @classmethod
-    def _write_selective_to_stream(
-        cls,
-        stream: BinaryIO,
-        surface_group: SurfaceGroup,
-        metadata: OBBMetadata,
-        vendor_private_key: ec.EllipticCurvePrivateKey,
-        platform_public_key: ec.EllipticCurvePublicKey,
-    ) -> None:
-        """Write selectively encrypted .obb data to a stream.
-
-        Args:
-            stream: Binary stream to write to
-            surface_group: Optical surfaces with visibility flags
-            metadata: Public metadata
-            vendor_private_key: Vendor's key for signing
-            platform_public_key: Platform's key for encryption
-        """
-        import json
-        writer = BinaryWriter(stream)
-
-        # Encrypt payload selectively
-        payload_dict, ephemeral_public = encrypt_payload_selective(
-            surface_group,
-            platform_public_key,
-        )
-
-        # Serialize payload dict to bytes for signing
-        payload_bytes = json.dumps(payload_dict).encode("utf-8")
-
-        # Sign payload
-        signature = sign_payload(payload_bytes, vendor_private_key)
-
-        # Update metadata with signature and timestamp
-        metadata.signature = signature
-        metadata.created_at = datetime.utcnow()
-
-        # Build and serialize header
-        header = build_header(metadata, ephemeral_public)
-        header_bytes = serialize_header(header)
-
-        # Write file structure
-        writer.write_magic(OBB_MAGIC)
-        writer.write_length_prefixed(header_bytes)
-        writer.write_bytes(payload_bytes)
 
 
 class OBBReader:
@@ -209,10 +123,9 @@ class OBBReader:
         >>> metadata = OBBReader.read_metadata(Path("component.obb"))
         >>>
         >>> # Full read with decryption
-        >>> metadata, surfaces = OBBReader.read_and_decrypt(
+        >>> metadata, file_bytes = OBBReader.read_and_decrypt(
         ...     path=Path("component.obb"),
         ...     platform_private_key=platform_key,
-        ...     vendor_public_key=vendor_key,
         ... )
     """
 
@@ -248,23 +161,18 @@ class OBBReader:
         cls,
         path: Path,
         platform_private_key: ec.EllipticCurvePrivateKey,
-        vendor_public_key: ec.EllipticCurvePublicKey,
-        verify_signature: bool = True,
-    ) -> tuple[OBBMetadata, SurfaceGroup]:
+    ) -> tuple[OBBMetadata, bytes]:
         """Read and decrypt a .obb file.
 
         Args:
             path: Path to the .obb file
             platform_private_key: Platform's private key for decryption
-            vendor_public_key: Vendor's public key for signature verification
-            verify_signature: Whether to verify the signature (default: True)
 
         Returns:
-            Tuple of (metadata, surface_group)
+            Tuple of (metadata, decrypted_file_bytes)
 
         Raises:
             InvalidMagicBytesError: If file is not a valid .obb
-            InvalidSignatureError: If signature verification fails
             DecryptionError: If decryption fails
         """
         with open(path, "rb") as f:
@@ -285,174 +193,38 @@ class OBBReader:
         metadata = extract_metadata(header)
         ephemeral_public = extract_ephemeral_key(header)
 
-        # Verify signature
-        if verify_signature:
-            if not verify_payload_signature(
-                encrypted_payload,
-                metadata.signature,
-                vendor_public_key,
-            ):
-                raise InvalidSignatureError()
+        # Derive shared AES key using ECDH
+        aes_key = derive_shared_key(platform_private_key, ephemeral_public)
+
+        # Split nonce and ciphertext
+        nonce = encrypted_payload[:12]  # First 12 bytes
+        ciphertext = encrypted_payload[12:]  # Rest
 
         # Decrypt payload
-        surface_group = decrypt_payload(
-            encrypted_payload,
-            ephemeral_public,
-            platform_private_key,
-        )
+        file_bytes = decrypt_payload(nonce, ciphertext, aes_key)
 
-        return metadata, surface_group
-
-    @classmethod
-    def read_and_decrypt_selective(
-        cls,
-        path: Path,
-        platform_private_key: ec.EllipticCurvePrivateKey,
-        vendor_public_key: ec.EllipticCurvePublicKey,
-        verify_signature: bool = True,
-    ) -> tuple[OBBMetadata, SurfaceGroup]:
-        """Read and decrypt a selectively encrypted .obb file.
-
-        Handles files created with write_selective() where only some surfaces
-        are encrypted. Public surfaces remain accessible without decryption keys.
-
-        Args:
-            path: Path to the .obb file
-            platform_private_key: Platform's private key for decryption
-            vendor_public_key: Vendor's public key for signature verification
-            verify_signature: Whether to verify the signature (default: True)
-
-        Returns:
-            Tuple of (metadata, surface_group)
-
-        Raises:
-            InvalidMagicBytesError: If file is not a valid .obb
-            InvalidSignatureError: If signature verification fails
-            DecryptionError: If decryption fails
-        """
-        import json
-
-        with open(path, "rb") as f:
-            reader = BinaryReader(f)
-
-            # Verify magic bytes
-            if not reader.read_and_verify_magic(OBB_MAGIC):
-                raise InvalidMagicBytesError()
-
-            # Read header
-            header_bytes = reader.read_length_prefixed()
-            header = deserialize_header(header_bytes)
-
-            # Read payload (JSON dict, not fully encrypted)
-            payload_bytes = reader.read_rest()
-
-        # Extract metadata and ephemeral key
-        metadata = extract_metadata(header)
-        ephemeral_public = extract_ephemeral_key(header)
-
-        # Verify signature
-        if verify_signature:
-            if not verify_payload_signature(
-                payload_bytes,
-                metadata.signature,
-                vendor_public_key,
-            ):
-                raise InvalidSignatureError()
-
-        # Parse payload dict
-        payload_dict = json.loads(payload_bytes.decode("utf-8"))
-
-        # Decrypt payload selectively
-        surface_group = decrypt_payload_selective(
-            payload_dict,
-            ephemeral_public,
-            platform_private_key,
-        )
-
-        return metadata, surface_group
+        return metadata, file_bytes
 
     @classmethod
     def read(
         cls,
         path: Path,
         platform_private_key: ec.EllipticCurvePrivateKey,
-        vendor_public_key: ec.EllipticCurvePublicKey,
-        verify_signature: bool = True,
-    ) -> tuple[OBBMetadata, SurfaceGroup]:
-        """Smart read that auto-detects encryption mode.
-
-        Automatically detects whether the file uses full or selective encryption
-        and calls the appropriate decryption method.
+    ) -> tuple[OBBMetadata, bytes]:
+        """Alias for read_and_decrypt for convenience.
 
         Args:
             path: Path to the .obb file
             platform_private_key: Platform's private key for decryption
-            vendor_public_key: Vendor's public key for signature verification
-            verify_signature: Whether to verify the signature (default: True)
 
         Returns:
-            Tuple of (metadata, surface_group)
+            Tuple of (metadata, decrypted_file_bytes)
 
         Raises:
             InvalidMagicBytesError: If file is not a valid .obb
-            InvalidSignatureError: If signature verification fails
             DecryptionError: If decryption fails
         """
-        import json
-
-        with open(path, "rb") as f:
-            reader = BinaryReader(f)
-
-            # Verify magic bytes
-            if not reader.read_and_verify_magic(OBB_MAGIC):
-                raise InvalidMagicBytesError()
-
-            # Read header
-            header_bytes = reader.read_length_prefixed()
-            header = deserialize_header(header_bytes)
-
-            # Read payload
-            payload_bytes = reader.read_rest()
-
-        # Extract metadata and ephemeral key
-        metadata = extract_metadata(header)
-        ephemeral_public = extract_ephemeral_key(header)
-
-        # Verify signature
-        if verify_signature:
-            if not verify_payload_signature(
-                payload_bytes,
-                metadata.signature,
-                vendor_public_key,
-            ):
-                raise InvalidSignatureError()
-
-        # Try to detect selective encryption by checking if payload is valid JSON
-        try:
-            payload_dict = json.loads(payload_bytes.decode("utf-8"))
-            if isinstance(payload_dict, dict) and payload_dict.get("encryption_mode") == "selective":
-                # Selective encryption mode
-                surface_group = decrypt_payload_selective(
-                    payload_dict,
-                    ephemeral_public,
-                    platform_private_key,
-                )
-            else:
-                # Fall back to full encryption
-                surface_group = decrypt_payload(
-                    payload_bytes,
-                    ephemeral_public,
-                    platform_private_key,
-                )
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            # Not JSON, must be fully encrypted
-            surface_group = decrypt_payload(
-                payload_bytes,
-                ephemeral_public,
-                platform_private_key,
-            )
-
-        return metadata, surface_group
+        return cls.read_and_decrypt(path, platform_private_key)
 
     @classmethod
     def is_valid_obb_file(cls, path: Path) -> bool:

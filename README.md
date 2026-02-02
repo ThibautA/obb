@@ -4,16 +4,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Create encrypted optical component files (`.obb`) from Zemax designs for secure distribution.
+Create encrypted optical design files (`.obb`) for secure distribution.
 
 ## Overview
 
-Optical BlackBox allows optical component manufacturers to distribute their lens designs in an encrypted format that:
+Optical BlackBox allows optical component manufacturers to distribute their optical designs in an encrypted format that:
 
-- **Protects IP**: Optical surface data is encrypted with AES-256-GCM
-- **Enables simulation**: Platforms can decrypt and use the design for raytracing
-- **Proves authenticity**: ECDSA signatures verify the vendor identity
-- **Exposes metadata**: Public properties (EFL, NA, diameter) remain visible
+- **Protects IP**: Complete file encrypted with AES-256-GCM
+- **Perfect restoration**: Decrypt to get the exact original file byte-for-byte
+- **Simple workflow**: Encrypt raw file → Decrypt → Restore original
+- **Minimal metadata**: Only vendor ID, model ID, and original filename exposed
 
 ## Installation
 
@@ -23,52 +23,53 @@ pip install optical-blackbox
 
 ## Quick Start
 
-### 1. Generate vendor keys
+### 1. Generate encryption keys
 
 ```bash
-obb keygen --vendor-id mycompany --output ./keys/
+obb keygen ./keys --prefix platform
 ```
 
 This creates:
-- `mycompany_private.pem` - Keep this **SECRET**
-- `mycompany_public.pem` - Register this on the platform
+- `platform_private.pem` - Keep this **SECRET** (for decryption)
+- `platform_public.pem` - Share with vendors (for encryption)
 
-### 2. Get the platform's public key
-
-Download from the platform or use the provided key file.
-
-### 3. Create a blackbox file
+### 2. Create an encrypted file
 
 ```bash
-obb create \
-    --input my-lens.zmx \
-    --private-key ./keys/mycompany_private.pem \
-    --platform-key platform_public.pem \
-    --vendor-id mycompany \
-    --name "MY-LENS-50" \
-    --output MY-LENS-50.obb
+obb create lens.zmx lens.obb \
+    -k platform_public.pem \
+    -v acme-optics \
+    -m lens-50mm \
+    -d "50mm imaging lens"
 ```
+
+### 3. Extract the encrypted file
+
+```bash
+obb extract lens.obb lens_restored.zmx \
+    -k platform_private.pem
+```
+
+The restored file is **byte-for-byte identical** to the original.
 
 ### 4. Inspect metadata (no decryption needed)
 
 ```bash
-obb inspect MY-LENS-50.obb
+obb inspect lens.obb
 ```
 
 Output:
 ```
 ┌─────────────────────────────────┐
 │        OBB Metadata             │
-├─────────────┬───────────────────┤
-│ Version     │ 1.0               │
-│ Vendor      │ mycompany         │
-│ Name        │ MY-LENS-50        │
-│ EFL         │ 50.0 mm           │
-│ NA          │ 0.25              │
-│ Diameter    │ 25.4 mm           │
-│ Surfaces    │ 4                 │
-│ Signature   │ ✓ Present         │
-└─────────────┴───────────────────┘
+├──────────────┬──────────────────┤
+│ Version      │ 1.0.0            │
+│ Vendor ID    │ acme-optics      │
+│ Model ID     │ lens-50mm        │
+│ Description  │ 50mm imaging lens│
+│ Original     │ lens.zmx         │
+│ Created      │ 2026-02-02...    │
+└──────────────┴──────────────────┘
 ```
 
 ## Security Model
@@ -79,36 +80,38 @@ Output:
 ├──────────────────────────────────────────────────────────────────┤
 │  PUBLIC HEADER (JSON)           │  ENCRYPTED PAYLOAD             │
 │  ─────────────────────          │  ────────────────────          │
-│  • vendor_id                    │  • Surface definitions         │
-│  • name                         │  • Radii, thicknesses          │
-│  • EFL, NA, diameter            │  • Materials                   │
-│  • spectral range               │  • Aspheric coefficients       │
-│  • signature (ECDSA)            │  (AES-256-GCM encrypted)       │
-│  • ephemeral public key         │                                │
+│  • version                      │  • Complete raw file bytes     │
+│  • vendor_id                    │  • Original file format        │
+│  • model_id                     │  • All original content        │
+│  • description (optional)       │  (AES-256-GCM encrypted)       │
+│  • original_filename            │                                │
+│  • created_at                   │                                │
+│  • ephemeral_public_key (ECDH)  │                                │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-- **Vendor Private Key**: Signs the encrypted payload, proving authenticity
-- **Platform Public Key**: Encrypts the optical data (ECDH + AES-256-GCM)
-- **Only the platform** can decrypt the optical surfaces
-- **Anyone** can verify the signature and read metadata
+- **Platform Public Key**: Used to encrypt file via ECDH + AES-256-GCM
+- **Only the platform** with the matching private key can decrypt
+- **Anyone** can read the public metadata
+- **Perfect roundtrip**: Decrypted file is byte-for-byte identical to original
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `obb keygen` | Generate ECDSA key pair for a vendor |
-| `obb create` | Create encrypted .obb from Zemax file |
+| `obb keygen` | Generate ECDSA P-256 key pair |
+| `obb create` | Encrypt an optical design file to .obb |
+| `obb extract` | Decrypt .obb and restore original file |
 | `obb inspect` | View public metadata without decryption |
 
 ## Supported Formats
 
-### Input (MVP)
-- Zemax `.zmx` (sequential mode)
-- Zemax `.zar` (archive containing .zmx)
+### Input
+- Any optical design file (`.zmx`, `.zar`, `.zos`, etc.)
+- Raw bytes are encrypted - no parsing required
 
 ### Output
-- `.obb` (Optical BlackBox format)
+- `.obb` (Optical BlackBox format) - encrypted file with metadata
 
 ## Development
 

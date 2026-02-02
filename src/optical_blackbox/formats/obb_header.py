@@ -3,13 +3,13 @@
 Provides serialization and deserialization of OBB file headers.
 """
 
+import json
 from typing import Any
 from datetime import datetime
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from optical_blackbox.models.metadata import OBBMetadata
-from optical_blackbox.serialization import json_codec
 from optical_blackbox.serialization.pem import public_key_to_pem, public_key_from_pem
 
 
@@ -48,7 +48,7 @@ def serialize_header(header: dict[str, Any]) -> bytes:
     Returns:
         UTF-8 encoded JSON bytes
     """
-    return json_codec.dumps(header, indent=2).encode("utf-8")
+    return json.dumps(header, indent=2, default=str).encode("utf-8")
 
 
 def deserialize_header(header_bytes: bytes) -> dict[str, Any]:
@@ -60,7 +60,7 @@ def deserialize_header(header_bytes: bytes) -> dict[str, Any]:
     Returns:
         Header dictionary
     """
-    return json_codec.loads(header_bytes.decode("utf-8"))
+    return json.loads(header_bytes.decode("utf-8"))
 
 
 def extract_metadata(header: dict[str, Any]) -> OBBMetadata:
