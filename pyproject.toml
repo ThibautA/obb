@@ -72,3 +72,20 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=optical_blackbox --cov-report=term-missing"
+
+[tool.coverage.run]
+omit = [
+    "src/optical_blackbox/cli/*",
+    "src/optical_blackbox/core/types.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
