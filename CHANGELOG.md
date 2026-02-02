@@ -66,7 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Release Notes
 
-### Version 1.0.0 - MVP Release
+**Note**: Version 1.0.0 below describes a legacy architecture that parsed optical files. This was completely replaced in v2.0.0 with a simpler byte-based encryption approach.
+
+### Version 2.0.0 - Architecture Simplification
+
+Major rewrite focusing on simple file encryption rather than optical parsing:
+- Removed all file parsing logic
+- Removed optical calculations
+- Simplified to byte-in, byte-out encryption
+- 36% code reduction
+- Perfect byte-for-byte restoration
+
+### Version 1.0.0 - MVP Release (Legacy)
 
 This is the first stable release of Optical BlackBox, providing a secure format for distributing encrypted optical lens designs.
 
